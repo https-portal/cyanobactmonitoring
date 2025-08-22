@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>💧 Water Quality Dashboard</title>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- XLSX Export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #f9f9f9;
+      --text: #222;
+      --card: #fff;
+      --accent: #007BFF;
+    }
+
+    body.dark {
+      --bg: #121212;
+      --text: #eee;
+      --card: #1e1e1e;
+      --accent: #4db6ac;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      min-height: 100vh;
+      transition: background 0.3s, color 0.3s;
+    }
+
+    .container {
+      background: var(--card);
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 1100px;
+    }
+
+    h2 {
+      color: var(--accent);
+      text-align: center;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: auto !important;
+      margin-bottom: 20px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin: 10px 0;
+    }
+
+    .btn {
+      background-color: var(--accent);
+      border: none;
+      color: white;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      background-color: #0056b3;
+    }
+
+    #status {
+      text-align: center;
+      margin-top: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 8px;
+      border: 1px solid #ccc;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      .controls { flex-direction: column; }
+      .btn { width: 100%; }
+      table { font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>📊 Real-Time Water Quality Dashboard</h2>
+    <div class="controls">
+      <input type="date" id="dateFilter" class="btn" />
+      <button class="btn" onclick="exportToExcel()">📤 Export to Excel</button>
+      <button class="btn" onclick="toggleTheme()">🌓 Toggle Dark Mode</button>
+    </div>
+
+    <!-- Multi-Sensor Chart -->
+    <canvas id="waterChart"></canvas>
+    <div id="status">⏳ Loading... </div>
+
+    <!-- Table -->
+    <table id="dataTable">
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>pH</th>
+          <th>Temperature (°C)</th>
+          <th>Turbidity (NTU)</th>
+          <th>DO (mg/L)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    // Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyCXf6W7mHbL_IAZnOgvVZLu2pdH-Dta_B8",
+      authDomain: "water-cb-monitoring-system.firebaseapp.com",
+      databaseURL: "https://water-cb-monitoring-system-default-rtdb.firebaseio.com",
+      projectId: "water-cb-monitoring-system",
+      storageBucket: "water-cb-monitoring-system.appspot.com",
+      messagingSenderId: "876922006297",
+      appId: "1:876922006297:web:235eef17a5abcfba5a7388"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const ctx = document.getElementById('waterChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'pH', data: [], borderColor: '#FF6384', fill: false },
+          { label: '🌡 Temp (°C)', data: [], borderColor: '#36A2EB', fill: false },
+          { label: '🌫 Turbidity (NTU)', data: [], borderColor: '#FFCE56', fill: false },
+          { label: '💧 DO (mg/L)', data: [], borderColor: '#4BC0C0', fill: false }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          tooltip: { mode: 'nearest', intersect: false },
+          legend: { labels: { font: { size: 14 } } }
+        },
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { title: { display: true, text: 'Timestamp' }, ticks: { maxTicksLimit: 12 } },
+          y: { beginAtZero: true }
+        }
+      }
+    });
+
+    const tableData = [];
+    const statusEl = document.getElementById("status");
+    const tableBody = document.getElementById("dataTable").querySelector("tbody");
+
+    function loadData() {
+      const filterDate = document.getElementById("dateFilter").value;
+      db.ref("/waterLogs").once("value", snap => {
+        const data = snap.val();
+        chart.data.labels = [];
+        chart.data.datasets.forEach(ds => ds.data = []);
+        tableBody.innerHTML = "";
+        tableData.length = 0;
+
+        if (!data) {
+          statusEl.innerHTML = "🚫 No data available";
+          return;
+        }
+
+        const entries = Object.entries(data).sort();
+        let count = 0;
+
+        entries.forEach(([timestamp, values]) => {
+          const date = timestamp.split("_")[0];
+          if (filterDate && filterDate !== date) return;
+
+          const pH = values.pH ?? null;
+          const temp = values.Temperature ?? null;
+          const turb = values.Turbidity ?? null;
+          const DOv = values.DO ?? null;
+
+          chart.data.labels.push(timestamp);
+          chart.data.datasets[0].data.push(pH);
+          chart.data.datasets[1].data.push(temp);
+          chart.data.datasets[2].data.push(turb);
+          chart.data.datasets[3].data.push(DOv);
+
+          tableData.push({ Timestamp: timestamp, pH, Temperature: temp, Turbidity: turb, DO: DOv });
+
+          const row = `<tr>
+            <td>${timestamp}</td>
+            <td>${pH?.toFixed(2) ?? "-"}</td>
+            <td>${temp?.toFixed(2) ?? "-"}</td>
+            <td>${turb?.toFixed(2) ?? "-"}</td>
+            <td>${DOv?.toFixed(2) ?? "-"}</td>
+          </tr>`;
+          tableBody.insertAdjacentHTML('beforeend', row);
+          count++;
+        });
+
+        chart.update();
+        statusEl.innerHTML = `✅ Loaded ${count} records`;
+      });
+    }
+
+    function exportToExcel() {
+      const ws = XLSX.utils.json_to_sheet(tableData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "WaterLogs");
+      XLSX.writeFile(wb, "WaterLogs.xlsx");
+    }
+
+    function toggleTheme() {
+      document.body.classList.toggle("dark");
+    }
+
+    // Auto-refresh every 30 sec
+    setInterval(loadData, 30000);
+    document.getElementById("dateFilter").addEventListener("change", loadData);
+
+    loadData(); // Initial
+  </script>
+</body>
+</html>
