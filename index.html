@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -47,18 +47,12 @@
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
       width: 100%;
-      max-width: 1100px;
+      max-width: 1200px;
     }
 
     h2 {
       color: var(--accent);
       text-align: center;
-    }
-
-    canvas {
-      width: 100% !important;
-      height: auto !important;
-      margin-bottom: 20px;
     }
 
     .controls {
@@ -88,6 +82,18 @@
       margin-top: 10px;
     }
 
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: auto !important;
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -101,10 +107,12 @@
       text-align: center;
     }
 
-    @media (max-width: 600px) {
-      .controls { flex-direction: column; }
-      .btn { width: 100%; }
+    @media (max-width: 800px) {
+      .charts-grid {
+        grid-template-columns: 1fr;
+      }
       table { font-size: 12px; }
+      .btn { width: 100%; }
     }
   </style>
 </head>
@@ -117,8 +125,14 @@
       <button class="btn" onclick="toggleTheme()">🌓 Toggle Dark Mode</button>
     </div>
 
-    <!-- Multi-Sensor Chart -->
-    <canvas id="waterChart"></canvas>
+    <!-- 2x2 Chart Grid -->
+    <div class="charts-grid">
+      <canvas id="phChart"></canvas>
+      <canvas id="tempChart"></canvas>
+      <canvas id="turbChart"></canvas>
+      <canvas id="doChart"></canvas>
+    </div>
+
     <div id="status">⏳ Loading... </div>
 
     <!-- Table -->
@@ -151,31 +165,24 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    const ctx = document.getElementById('waterChart').getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [
-          { label: 'pH', data: [], borderColor: '#FF6384', fill: false },
-          { label: '🌡 Temp (°C)', data: [], borderColor: '#36A2EB', fill: false },
-          { label: '🌫 Turbidity (NTU)', data: [], borderColor: '#FFCE56', fill: false },
-          { label: '💧 DO (mg/L)', data: [], borderColor: '#4BC0C0', fill: false }
-        ]
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          tooltip: { mode: 'nearest', intersect: false },
-          legend: { labels: { font: { size: 14 } } }
-        },
-        interaction: { mode: 'index', intersect: false },
-        scales: {
-          x: { title: { display: true, text: 'Timestamp' }, ticks: { maxTicksLimit: 12 } },
-          y: { beginAtZero: true }
+    // Chart setup
+    function makeChart(ctx, label, color) {
+      return new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [{ label, data: [], borderColor: color, fill: false }] },
+        options: {
+          responsive: true,
+          plugins: { legend: { labels: { font: { size: 14 } } } },
+          interaction: { mode: 'index', intersect: false },
+          scales: { x: { ticks: { maxTicksLimit: 12 } }, y: { beginAtZero: true } }
         }
-      }
-    });
+      });
+    }
+
+    const phChart = makeChart(document.getElementById('phChart'), 'pH', '#FF6384');
+    const tempChart = makeChart(document.getElementById('tempChart'), '🌡 Temperature (°C)', '#36A2EB');
+    const turbChart = makeChart(document.getElementById('turbChart'), '🌫 Turbidity (NTU)', '#FFCE56');
+    const doChart = makeChart(document.getElementById('doChart'), '💧 DO (mg/L)', '#4BC0C0');
 
     const tableData = [];
     const statusEl = document.getElementById("status");
@@ -185,8 +192,12 @@
       const filterDate = document.getElementById("dateFilter").value;
       db.ref("/waterLogs").once("value", snap => {
         const data = snap.val();
-        chart.data.labels = [];
-        chart.data.datasets.forEach(ds => ds.data = []);
+
+        [phChart, tempChart, turbChart, doChart].forEach(c => {
+          c.data.labels = [];
+          c.data.datasets[0].data = [];
+        });
+
         tableBody.innerHTML = "";
         tableData.length = 0;
 
@@ -195,8 +206,8 @@
           return;
         }
 
-        const entries = Object.entries(data).sort();
         let count = 0;
+        const entries = Object.entries(data).sort();
 
         entries.forEach(([timestamp, values]) => {
           const date = timestamp.split("_")[0];
@@ -207,13 +218,17 @@
           const turb = values.Turbidity ?? null;
           const DOv = values.DO ?? null;
 
-          chart.data.labels.push(timestamp);
-          chart.data.datasets[0].data.push(pH);
-          chart.data.datasets[1].data.push(temp);
-          chart.data.datasets[2].data.push(turb);
-          chart.data.datasets[3].data.push(DOv);
+          phChart.data.labels.push(timestamp);
+          phChart.data.datasets[0].data.push(pH);
 
-          tableData.push({ Timestamp: timestamp, pH, Temperature: temp, Turbidity: turb, DO: DOv });
+          tempChart.data.labels.push(timestamp);
+          tempChart.data.datasets[0].data.push(temp);
+
+          turbChart.data.labels.push(timestamp);
+          turbChart.data.datasets[0].data.push(turb);
+
+          doChart.data.labels.push(timestamp);
+          doChart.data.datasets[0].data.push(DOv);
 
           const row = `<tr>
             <td>${timestamp}</td>
@@ -223,10 +238,13 @@
             <td>${DOv?.toFixed(2) ?? "-"}</td>
           </tr>`;
           tableBody.insertAdjacentHTML('beforeend', row);
+
+          tableData.push({ Timestamp: timestamp, pH, Temperature: temp, Turbidity: turb, DO: DOv });
           count++;
         });
 
-        chart.update();
+        [phChart, tempChart, turbChart, doChart].forEach(c => c.update());
+
         statusEl.innerHTML = `✅ Loaded ${count} records`;
       });
     }
